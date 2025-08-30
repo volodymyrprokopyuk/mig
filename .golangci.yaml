@@ -1,0 +1,23 @@
+version: "2"
+linters:
+  enable:
+    - goconst
+    - perfsprint
+    - gocritic
+    - gosec
+  settings:
+    errcheck:
+      check-type-assertions: true
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+    goconst:
+      match-constant: true
+      find-duplicates: true
+    gocritic:
+      enable-all: true
+      disabled-checks:
+        - sprintfQuotedString
+        - emptyStringTest
+        - unnamedResult

@@ -1,0 +1,16 @@
+* Mig
+
+** PostgreSQL Docker compose stack
+
+#+BEGIN_SRC fish
+# Start PostgreSQL instance for local development
+docker compose up --detach
+# Create mig PostgreSQL superuser
+docker compose exec postgres psql --username postgres --dbname postgres \
+  --command "create role mig with login superuser password '$POSTGRES_PASSWORD'"
+# Execute a query from a file
+docker compose exec --no-TTY postgres psql --username mig --dbname postgres \
+  < postgres/query.sql
+# Destroy local PostgreSQL instance
+docker compose down
+#+END_SRC
