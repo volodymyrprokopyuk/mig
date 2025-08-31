@@ -10,19 +10,19 @@ import (
 	"github.com/volodymyrprokopyuk/mig/postgres"
 )
 
-func setSchemas() {
-  type data struct {
+func setupMigration() {
+  type schemaData struct {
     Schema string
   }
   mig.SetFS(&postgres.FS)
   mig.SetURL(os.Getenv("POSTGRES_URL"))
   mig.SetSchema("util", "util", nil)
-  mig.SetSchema("eu", "region", data{Schema: "eu"})
-  mig.SetSchema("us", "region", data{Schema: "us"})
+  mig.SetSchema("eu", "region", schemaData{Schema: "eu"})
+  mig.SetSchema("us", "region", schemaData{Schema: "us"})
 }
 
 func migCmd() *cli.Command {
-  setSchemas()
+  setupMigration()
   cmd := &cli.Command{
     Name: "mig",
     Usage: "Apply and revert migrations to PostgreSQL",

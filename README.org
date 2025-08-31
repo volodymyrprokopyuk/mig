@@ -1,16 +1,407 @@
 * Mig
+:PROPERTIES:
+:TOC: :include descendants
+:END:
 
-** PostgreSQL Docker compose stack
+:CONTENTS:
+- [[#abstract][Abstract]]
+- [[#features][Features]]
+- [[#tutorial][Tutorial]]
+  - [[#dependencies][Dependencies]]
+- [[#documentation][Documentation]]
+  - [[#api][API]]
+  - [[#cli][CLI]]
+- [[#license][License]]
+:END:
+
+** Abstract
+
+** Features
+
+- Simple, yet effective
+- Minimalist, yet complete
+- Define migrations with the full power of PostgreSQL-native SQL
+- Scale migrations to multiple schemas with the flexibility of Go templates
+- Control migrations with the simplicity and ubiquity of CLI automation
+- Transactional application and revert of each migration
+
+** Tutorial
+
+*** Dependencies
+
+Install project dependencies on Linux Arch.
 
 #+BEGIN_SRC fish
-# Start PostgreSQL instance for local development
+yay -S go golangci-lint fish
+#+END_SRC
+
+Clone the mig repository into a local directory.
+
+#+BEGIN_SRC fish
+git clone https://github.com/volodymyrprokopyuk/mig.git
+cd mig
+#+END_SRC
+
+Build the mig binary in a local directory.
+
+#+BEGIN_SRC fish
+./mig.fish build
+#+END_SRC
+
+Prepare a password for the PostgreSQL =postgres= and the =mig= superusers.
+
+#+BEGIN_SRC fish
+# File .secret
+set -gx POSTGRES_PASSWORD secretPassword
+set -gx POSTGRES_URL postgres://mig:$POSTGRES_PASSWORD@localhost:5432/postgres
+#+END_SRC
+
+Start a local PostgreSQL instance using Docker compose.
+
+#+BEGIN_SRC fish
+source .secret
 docker compose up --detach
-# Create mig PostgreSQL superuser
+#+END_SRC
+
+Create the =mig= PostgreSQL superuser.
+
+#+BEGIN_SRC fish
 docker compose exec postgres psql --username postgres --dbname postgres \
   --command "create role mig with login superuser password '$POSTGRES_PASSWORD'"
-# Execute a query from a file
+#+END_SRC
+
+Ensure a copy of ~postgres/util_00000_migration.{apply,revert}.sql~ files in the
+migration directory. These migration files create and destroy the
+=util.migration= table and migration access functions necessary for correct
+working of migrations.
+
+Create the ~postgres/region_00000_account.apply.sql~ file with a multi-regional
+payment account using SQL. Every migration apply file must have a migration
+apply header that contains a target schema, a migration version, and a migration
+description. Then the actual migration defines types, tables, indices, functions
+for the migration to be applied to the specified schema using the
+PostgreSQL-native SQL. Every migration file has support for Go templates to
+adapt and configure SQL objects before their application to the specific schema.
+Every migration file can be parameterized with the application-provided,
+schema-specific data, use conditional logic, looping logic, and modularization
+primitives of Go templates. Finally, the mandatory migration apply footer
+applies the migration to the schema.
+
+#+BEGIN_SRC sql
+-- File postgres/region_00000_account.apply.sql
+do $_$
+declare
+  a_schema constant text := '{{.Schema}}';
+  a_version constant text := '00000';
+  a_description constant text := 'Create {{.Schema}}.account';
+begin
+
+create schema {{.Schema}};
+
+create type {{.Schema}}.account_type as enum (
+  'receivable',
+  'payable'
+);
+
+create type {{.Schema}}.currency_type as enum (
+  {{ if (eq .Schema "us") }}
+    'usd'
+  {{ else }}
+    'eur'
+  {{ end }}
+);
+
+create table {{.Schema}}.account (
+  id text not null default md5(random()::text),
+  account_type {{.Schema}}.account_type not null,
+  currency {{.Schema}}.currency_type not null,
+  constraint pk_account primary key (id)
+);
+
+perform util.migration_apply(a_schema, a_version, a_description);
+
+end;
+$_$;
+#+END_SRC
+
+Create the ~postgres/region_00000_account.revert.sql~ file to destroy a
+multi-regional payment account. Every migration revert file must have a
+migration revert header that contains a target schema, and a migration version.
+The migration revert header checks that the migration is actually applied before
+reverting the migration. Then the actual revert actions are defined in the
+PostgreSQL-native SQL with support for Go templates. Finally, the mandatory
+migration revert footer reverts the migration in the schema.
+
+#+BEGIN_SRC sql
+-- File postgres/region_00000_account.revert.sql
+do $$
+declare
+  a_schema constant text := '{{.Schema}}';
+  a_version constant text := '00000';
+begin
+
+perform util.migration_check_applied(a_schema, a_version);
+
+drop table {{.Schema}}.account;
+
+drop type {{.Schema}}.currency_type;
+drop type {{.Schema}}.account_type;
+
+drop schema {{.Schema}};
+
+perform util.migration_revert(a_schema, a_version);
+
+end;
+$$;
+#+END_SRC
+
+Embed the migration apply and revert files into the self-contained =mig=
+executable binary for easy and convenient migrations both in the cloud and on
+premises. Ensure a copy of the ~postgres/embed.go~ file in the migration
+directory.
+
+#+BEGIN_SRC go
+// File postgres/embed.go
+package postgres
+
+import "embed"
+
+//go:embed *.apply.sql *.revert.sql
+var FS embed.FS
+#+END_SRC
+
+Set up and configure migrations by providing an embedded file system with the
+migration apply and revert files, by specifying the =POSTGRES_URL= of the target
+PostgreSQL instance, and by enumerating in the right order the PostgreSQL
+schemes to migrate along with the schema-specific parameterization data. The
+same schema SQL migration template can be used with different parameterization
+data to automatically create different schemes.
+
+#+BEGIN_SRC go
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+
+	"github.com/urfave/cli/v3"
+	"github.com/volodymyrprokopyuk/mig"
+	"github.com/volodymyrprokopyuk/mig/postgres"
+)
+
+func setupMigration() {
+  type schemaData struct {
+    Schema string
+  }
+  mig.SetFS(&postgres.FS)
+  mig.SetURL(os.Getenv("POSTGRES_URL"))
+  mig.SetSchema("util", "util", nil)
+  mig.SetSchema("eu", "region", schemaData{Schema: "eu"})
+  mig.SetSchema("us", "region", schemaData{Schema: "us"})
+}
+
+func migCmd() *cli.Command {
+  setupMigration()
+  cmd := &cli.Command{
+    Name: "mig",
+    Usage: "Apply and revert migrations to PostgreSQL",
+    Version: os.Getenv("MIG_VERSION"),
+    UseShortOptionHandling: true,
+    Commands: []*cli.Command{mig.ApplyCmd(), mig.RevertCmd()},
+  }
+  return cmd
+}
+
+func main() {
+  err := migCmd().Run(context.Background(), os.Args)
+  if err != nil {
+    fmt.Fprintf(os.Stderr, "%s\n", err)
+    os.Exit(1)
+  }
+}
+#+END_SRC
+
+Apply the latest migrations to all schemes in dry mode.
+
+#+BEGIN_SRC fish
+./bin/mig apply --schema all --version latest --dry
+# => util will apply 00000
+# => eu will apply 00000
+# => us will apply 00000
+#+END_SRC
+
+Apply latest migrations to all schemes.
+
+#+BEGIN_SRC fish
+./bin/mig apply --schema all --version latest
+# => util applying 00000
+# => eu applying 00000
+# => us applying 00000
+#+END_SRC
+
+Create and view payment accounts in the EU and US regions.
+
+#+BEGIN_SRC sql
+-- File postgres/query.sql
+\set ON_ERROR_STOP on
+\pset linestyle unicode
+\pset columns 160
+\pset expanded auto
+\pset null ><
+
+-- EU region
+insert into eu.account(account_type, currency)
+values ('payable', 'eur');
+select acc.* from eu.account acc;
+
+-- US region
+insert into us.account(account_type, currency)
+values ('payable', 'usd');
+select acc.* from us.account acc;
+#+END_SRC
+
+#+BEGIN_SRC fish
 docker compose exec --no-TTY postgres psql --username mig --dbname postgres \
   < postgres/query.sql
-# Destroy local PostgreSQL instance
+# INSERT 0 1
+#                 id                │ account_type │ currency
+# ──────────────────────────────────┼──────────────┼──────────
+#  5bd782a438aa28f7be3e78bd3f3d78e7 │ payable      │ eur
+# (1 row)
+
+# INSERT 0 1
+#                 id                │ account_type │ currency
+# ──────────────────────────────────┼──────────────┼──────────
+#  be02dbdbee67cb9f714e6c8728ab945e │ payable      │ usd
+#+END_SRC
+
+Revert all migrations on all schemes.
+
+#+BEGIN_SRC fish
+./bin/mig revert --schema all --version 00000
+# => us reverting 00000
+# => eu reverting 00000
+# => util reverting 00000
+#+END_SRC
+
+Destroy the local PostgreSQL instance and the Docker compose stack.
+
+#+BEGIN_SRC fish
 docker compose down
 #+END_SRC
+
+** Documentation
+
+*** API
+
+The =mig= library provides a minimalist interface for setting up and configuring
+multi-schema migrations against a PostgreSQL instance. The interface provides
+the ~mig.SetFS()~ and the ~mig.SetURL()~ setters for setting en embedded file
+system that contains the migration apply and revert files, and the
+=POSTGRES_URL= of the target PostgreSQL instance. The interface provides the
+~mig.SetSchema()~ setter for configuring schemes, SQL migration templates, and
+schema-specific parameterization data for each migration. The interface also
+provides the ~mig.ApplyCmd()~ and the ~mig.RevertCmd()~ that implement the CLI
+automation facilities to be included as commands into the self-contained
+executable binary CLI. The interface also provies the ~mig.Apply()~ and the
+~mig.Revert()~ low-level functions to be used when implementing an integration
+of migrations under an interface different from CLI e.g. REST API, gRPC API.
+
+Migration setup and configuration.
+
+#+BEGIN_SRC go
+// Set an embedded file system with migration applay and revert files
+func SetFS(efs *embed.FS)
+// Set a URL of the target PostgreSQL instance
+func SetURL(url string)
+// Set a schema name, a prefix of the corresponding migration file, and a
+// schema-specific migration parameterization data
+func SetSchema(schema, prefix string, data any)
+#+END_SRC
+
+Migration apply and revert CLI commands.
+
+#+BEGIN_SRC go
+// Include the apply CLI command into a self-contained executable binary
+func ApplyCmd() *cli.Command
+// Include the revert CLI command into a self-contained executable binary
+func RevertCmd() *cli.Command
+#+END_SRC
+
+Migration apply and revert low-level functions.
+
+#+BEGIN_SRC go
+// Apply a migration version to a schema using migration apply templates, and a
+// pgx pool of a target PostgreSQL instance, optionally specifying a dry mode
+// to show, but not apply migrations
+func Apply(
+  ctx context.Context, tpl *template.Template, pgp *pgxpool.Pool,
+  schema, version string, dry bool,
+) error
+// Revert a migration version on a schema using migration revert templates, and
+// a pgx pool of a target PostgreSQL instance, optionally specifying a dry mode
+// to show, but not apply reverts
+func Revert(
+  ctx context.Context, tpl *template.Template, pgp *pgxpool.Pool,
+  schema, version string, dry bool,
+) error
+#+END_SRC
+
+*** CLI
+
+The =mig= executable provides the =apply= and the =revert= commands.
+
+#+BEGIN_SRC fish
+mig
+NAME:
+   mig - Apply and revert migrations to PostgreSQL
+
+USAGE:
+   mig [global options] [command [command options]]
+
+COMMANDS:
+   apply    Apply not applied migrations to all or specific schema
+   revert   Revert already applied migrations from all or specific schema
+   help, h  Shows a list of commands or help for one command
+
+GLOBAL OPTIONS:
+   --help, -h     show help
+   --version, -v  print the version
+#+END_SRC
+
+The =mig apply= command.
+
+#+BEGIN_SRC fish
+NAME:
+   mig apply - Apply not applied migrations to all or specific schema
+
+USAGE:
+   mig apply
+
+OPTIONS:
+   --schema string   schema to migrate or all (reqired)
+   --version string  version to apply or latest (reqired)
+   --dry             show apply plan, but do not apply (default: false)
+   --help, -h        show help
+#+END_SRC
+
+The =mig revert= command.
+
+#+BEGIN_SRC fish
+NAME:
+   mig revert - Revert already applied migrations from all or specific schema
+
+USAGE:
+   mig revert
+
+OPTIONS:
+   --schema string   schema to revert or all (required)
+   --version string  version to revert (required)
+   --dry             show revert plan, but do not revert (default: false)
+   --help, -h        show help
+#+END_SRC
+
+** License
+
+[[https://opensource.org/license/mit][MIT License]]
