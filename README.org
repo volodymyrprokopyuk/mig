@@ -32,7 +32,10 @@ building *PostgreSQL migration infrastructure* in Go using the full power of
 *PostgreSQL-native SQL*, the flexibility of *Go templates*, the ubiquity of *CLI
 automation*, and the reliability of *ACID transactions*. The package exposes a
 minimal interface for setting up, configuring, and scaling migrations in Go. The
-package provides a convenient CLI commands for applying and reverting migrations.
+package provides a convenient CLI commands for applying and reverting
+migrations. The final result is a convenient, self-contained executable binary
+with embedded migration apply and revert files ready to be applied both in the
+cloud and on premise
 
 ** Features
 

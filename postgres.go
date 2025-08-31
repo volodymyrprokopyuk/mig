@@ -34,7 +34,12 @@ func qryApplyMigration(
   if err != nil {
     return err
   }
-  return pgx.BeginFunc(ctx, pgp, func(tx pgx.Tx) error {
+  opt := pgx.TxOptions{
+    IsoLevel: pgx.Serializable,
+    AccessMode: pgx.ReadWrite,
+    DeferrableMode: pgx.NotDeferrable,
+  }
+  return pgx.BeginTxFunc(ctx, pgp, opt, func(tx pgx.Tx) error {
     _, err := tx.Exec(ctx, sql.String())
     return err
   })
