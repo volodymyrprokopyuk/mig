@@ -1,4 +1,4 @@
-* Mig
+* PostgreSQL migration infrastructure
 :PROPERTIES:
 :TOC: :include descendants
 :END:
@@ -7,7 +7,18 @@
 - [[#abstract][Abstract]]
 - [[#features][Features]]
 - [[#tutorial][Tutorial]]
-  - [[#dependencies][Dependencies]]
+  - [[#install-dependencies][Install dependencies]]
+  - [[#start-local-postgresql-instance][Start local PostgreSQL instance]]
+  - [[#copy-core-sql-migration-files][Copy core SQL migration files]]
+  - [[#define-migration-apply-in-sql-using-go-templates][Define migration apply in SQL using Go templates]]
+  - [[#define-migration-revert-in-sql-using-go-templates][Define migration revert in SQL using Go templates]]
+  - [[#embed-migration-files-into-executable][Embed migration files into executable]]
+  - [[#set-up-and-configure-migrations][Set up and configure migrations]]
+  - [[#build-self-contained-executable-with-embedded-migrations][Build self-contained executable with embedded migrations]]
+  - [[#apply-migrations][Apply migrations]]
+  - [[#use-created-schemes][Use created schemes]]
+  - [[#revert-migrations][Revert migrations]]
+  - [[#destroy-local-postgresql-instance][Destroy local PostgreSQL instance]]
 - [[#documentation][Documentation]]
   - [[#api][API]]
   - [[#cli][CLI]]
@@ -16,39 +27,39 @@
 
 ** Abstract
 
+=mig= provides a simple, yet effective, minimalist, yet complete Go package for
+building *PostgreSQL migration infrastructure* in Go using the full power of
+*PostgreSQL-native SQL*, the flexibility of *Go templates*, the ubiquity of *CLI
+automation*, and the reliability of *ACID transactions*. The package exposes a
+minimal interface for setting up, configuring, and scaling migrations in Go. The
+package provides a convenient CLI commands for applying and reverting migrations.
+
 ** Features
 
-- Simple, yet effective
-- Minimalist, yet complete
-- Define migrations with the full power of PostgreSQL-native SQL
-- Scale migrations to multiple schemas with the flexibility of Go templates
-- Control migrations with the simplicity and ubiquity of CLI automation
-- Transactional application and revert of each migration
+- *Define migrations* with the full power of *PostgreSQL-native SQL*
+- *Scale migrations* to multiple schemes with the flexibility of *Go templates*
+- *Control migrations* with the simplicity and ubiquity of *CLI automation*
+- *Secure migrations* with the reliability and isolation of *ACID transactions*
 
 ** Tutorial
 
-*** Dependencies
+*** Install dependencies
 
-Install project dependencies on Linux Arch.
-
-#+BEGIN_SRC fish
-yay -S go golangci-lint fish
-#+END_SRC
-
-Clone the mig repository into a local directory.
+Install the project dependencies on Linux Arch.
 
 #+BEGIN_SRC fish
-git clone https://github.com/volodymyrprokopyuk/mig.git
-cd mig
+yay -S fish go golangci-lint
 #+END_SRC
 
-Build the mig binary in a local directory.
+*** Start local PostgreSQL instance
+
+Clone the =mig= repository into a local directory.
 
 #+BEGIN_SRC fish
-./mig.fish build
+git clone https://github.com/volodymyrprokopyuk/mig.git && cd mig
 #+END_SRC
 
-Prepare a password for the PostgreSQL =postgres= and the =mig= superusers.
+Create a password for the PostgreSQL =postgres= and =mig= superusers.
 
 #+BEGIN_SRC fish
 # File .secret
@@ -70,21 +81,25 @@ docker compose exec postgres psql --username postgres --dbname postgres \
   --command "create role mig with login superuser password '$POSTGRES_PASSWORD'"
 #+END_SRC
 
-Ensure a copy of ~postgres/util_00000_migration.{apply,revert}.sql~ files in the
-migration directory. These migration files create and destroy the
-=util.migration= table and migration access functions necessary for correct
-working of migrations.
+*** Copy core SQL migration files
 
-Create the ~postgres/region_00000_account.apply.sql~ file with a multi-regional
-payment account using SQL. Every migration apply file must have a migration
-apply header that contains a target schema, a migration version, and a migration
-description. Then the actual migration defines types, tables, indices, functions
-for the migration to be applied to the specified schema using the
-PostgreSQL-native SQL. Every migration file has support for Go templates to
-adapt and configure SQL objects before their application to the specific schema.
-Every migration file can be parameterized with the application-provided,
+Every migration directory with migration apply and revert files must contain the
+~postgres/util_00000_migration.{apply,revert}.sql~ files. These migration files
+create and destroy the =util.migration= table and migration management functions
+necessary for correct operation of migrations.
+
+*** Define migration apply in SQL using Go templates
+
+Create the ~postgres/region_00000_account.apply.sql~ migration apply file with a
+multi-regional payment account using PostgreSQL-native SQL. Every migration
+apply file must have a *migration apply header* that contains a target schema, a
+migration version, and a migration description. Then the actual migration
+defines types, tables, indices, functions for the migration to be applied to the
+schema using the PostgreSQL-native SQL. Every migration file has support for Go
+templates to adapt and configure SQL objects before their application to the
+schema. Every migration file can be parameterized with the application-provided,
 schema-specific data, use conditional logic, looping logic, and modularization
-primitives of Go templates. Finally, the mandatory migration apply footer
+primitives of Go templates. Finally, the mandatory *migration apply footer*
 applies the migration to the schema.
 
 #+BEGIN_SRC sql
@@ -124,13 +139,15 @@ end;
 $_$;
 #+END_SRC
 
-Create the ~postgres/region_00000_account.revert.sql~ file to destroy a
-multi-regional payment account. Every migration revert file must have a
-migration revert header that contains a target schema, and a migration version.
-The migration revert header checks that the migration is actually applied before
-reverting the migration. Then the actual revert actions are defined in the
-PostgreSQL-native SQL with support for Go templates. Finally, the mandatory
-migration revert footer reverts the migration in the schema.
+*** Define migration revert in SQL using Go templates
+
+Create the ~postgres/region_00000_account.revert.sql~ migration revert file to
+destroy a multi-regional payment account. Every migration revert file must have
+a *migration revert header* that contains a target schema, and a migration
+version. The migration revert header checks that the migration is actually
+applied before reverting the migration. Then the actual revert actions are
+defined in the PostgreSQL-native SQL with support for Go templates. Finally, the
+mandatory *migration revert footer* reverts the migration on the schema.
 
 #+BEGIN_SRC sql
 -- File postgres/region_00000_account.revert.sql
@@ -155,10 +172,11 @@ end;
 $$;
 #+END_SRC
 
-Embed the migration apply and revert files into the self-contained =mig=
-executable binary for easy and convenient migrations both in the cloud and on
-premises. Ensure a copy of the ~postgres/embed.go~ file in the migration
-directory.
+*** Embed migration files into executable
+
+Embed migration apply and revert files into a self-contained =mig= executable
+binary for easy and convenient migrations both in the cloud and on premise.
+Ensure a copy of the ~postgres/embed.go~ file in the migration directory.
 
 #+BEGIN_SRC go
 // File postgres/embed.go
@@ -170,14 +188,19 @@ import "embed"
 var FS embed.FS
 #+END_SRC
 
+*** Set up and configure migrations
+
 Set up and configure migrations by providing an embedded file system with the
 migration apply and revert files, by specifying the =POSTGRES_URL= of the target
 PostgreSQL instance, and by enumerating in the right order the PostgreSQL
 schemes to migrate along with the schema-specific parameterization data. The
-same schema SQL migration template can be used with different parameterization
-data to automatically create different schemes.
+same SQL schema migration template can be used with different schema names and
+parameterization data to automatically create different schemes. E.g. the
+~postgres/region_00000_account.{apply,revert}.sql~ migration template is used to
+create the =eu= and =us= schemes.
 
 #+BEGIN_SRC go
+// File cmd/mig/main.go
 package main
 
 import (
@@ -222,7 +245,20 @@ func main() {
 }
 #+END_SRC
 
-Apply the latest migrations to all schemes in dry mode.
+*** Build self-contained executable with embedded migrations
+
+Lint the =mig= source code and build the self-contained =bin/mig= executable
+binary in a local directory.
+
+#+BEGIN_SRC fish
+./mig.fish lint
+./mig.fish build
+#+END_SRC
+
+*** Apply migrations
+
+Show a play of application of the latest migrations to all schemes using the dry
+mode.
 
 #+BEGIN_SRC fish
 ./bin/mig apply --schema all --version latest --dry
@@ -231,7 +267,7 @@ Apply the latest migrations to all schemes in dry mode.
 # => us will apply 00000
 #+END_SRC
 
-Apply latest migrations to all schemes.
+Apply the latest migrations to all schemes.
 
 #+BEGIN_SRC fish
 ./bin/mig apply --schema all --version latest
@@ -239,6 +275,8 @@ Apply latest migrations to all schemes.
 # => eu applying 00000
 # => us applying 00000
 #+END_SRC
+
+*** Use created schemes
 
 Create and view payment accounts in the EU and US regions.
 
@@ -276,6 +314,8 @@ docker compose exec --no-TTY postgres psql --username mig --dbname postgres \
 #  be02dbdbee67cb9f714e6c8728ab945e │ payable      │ usd
 #+END_SRC
 
+*** Revert migrations
+
 Revert all migrations on all schemes.
 
 #+BEGIN_SRC fish
@@ -284,6 +324,8 @@ Revert all migrations on all schemes.
 # => eu reverting 00000
 # => util reverting 00000
 #+END_SRC
+
+*** Destroy local PostgreSQL instance
 
 Destroy the local PostgreSQL instance and the Docker compose stack.
 
@@ -297,14 +339,14 @@ docker compose down
 
 The =mig= library provides a minimalist interface for setting up and configuring
 multi-schema migrations against a PostgreSQL instance. The interface provides
-the ~mig.SetFS()~ and the ~mig.SetURL()~ setters for setting en embedded file
-system that contains the migration apply and revert files, and the
-=POSTGRES_URL= of the target PostgreSQL instance. The interface provides the
-~mig.SetSchema()~ setter for configuring schemes, SQL migration templates, and
+the ~mig.SetFS()~ and the ~mig.SetURL()~ setters for setting an embedded file
+system that contains migration apply and revert files, and the =POSTGRES_URL= of
+the target PostgreSQL instance. The interface provides the ~mig.SetSchema()~
+setter for configuring schemes names, corresponding SQL migration templates, and
 schema-specific parameterization data for each migration. The interface also
 provides the ~mig.ApplyCmd()~ and the ~mig.RevertCmd()~ that implement the CLI
-automation facilities to be included as commands into the self-contained
-executable binary CLI. The interface also provies the ~mig.Apply()~ and the
+automation facilities to be included as CLI commands into a self-contained
+executable binary. The interface also provides the ~mig.Apply()~ and the
 ~mig.Revert()~ low-level functions to be used when implementing an integration
 of migrations under an interface different from CLI e.g. REST API, gRPC API.
 
@@ -313,7 +355,7 @@ Migration setup and configuration.
 #+BEGIN_SRC go
 // Set an embedded file system with migration applay and revert files
 func SetFS(efs *embed.FS)
-// Set a URL of the target PostgreSQL instance
+// Set a URL of a target PostgreSQL instance
 func SetURL(url string)
 // Set a schema name, a prefix of the corresponding migration file, and a
 // schema-specific migration parameterization data
@@ -334,14 +376,14 @@ Migration apply and revert low-level functions.
 #+BEGIN_SRC go
 // Apply a migration version to a schema using migration apply templates, and a
 // pgx pool of a target PostgreSQL instance, optionally specifying a dry mode
-// to show, but not apply migrations
+// to show a migration plan, without applying migrations
 func Apply(
   ctx context.Context, tpl *template.Template, pgp *pgxpool.Pool,
   schema, version string, dry bool,
 ) error
 // Revert a migration version on a schema using migration revert templates, and
 // a pgx pool of a target PostgreSQL instance, optionally specifying a dry mode
-// to show, but not apply reverts
+// to show a revert plan, without applying reverts
 func Revert(
   ctx context.Context, tpl *template.Template, pgp *pgxpool.Pool,
   schema, version string, dry bool,
@@ -350,7 +392,7 @@ func Revert(
 
 *** CLI
 
-The =mig= executable provides the =apply= and the =revert= commands.
+The =mig= executable provides the =apply= and =revert= commands.
 
 #+BEGIN_SRC fish
 mig
@@ -373,6 +415,7 @@ GLOBAL OPTIONS:
 The =mig apply= command.
 
 #+BEGIN_SRC fish
+mig apply
 NAME:
    mig apply - Apply not applied migrations to all or specific schema
 
@@ -389,6 +432,7 @@ OPTIONS:
 The =mig revert= command.
 
 #+BEGIN_SRC fish
+mig revert
 NAME:
    mig revert - Revert already applied migrations from all or specific schema
 
