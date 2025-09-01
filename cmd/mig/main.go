@@ -10,6 +10,8 @@ import (
 	"github.com/volodymyrprokopyuk/mig/postgres"
 )
 
+var version string
+
 func setupMigration() {
   type schemaData struct {
     Schema string
@@ -26,7 +28,7 @@ func migCmd() *cli.Command {
   cmd := &cli.Command{
     Name: "mig",
     Usage: "Apply and revert migrations to PostgreSQL",
-    Version: os.Getenv("MIG_VERSION"),
+    Version: version,
     UseShortOptionHandling: true,
     Commands: []*cli.Command{mig.ApplyCmd(), mig.RevertCmd()},
   }

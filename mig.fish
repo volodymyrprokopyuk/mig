@@ -9,7 +9,8 @@ function mig_build
   echo "=> updating mig"
   go get -u ./... && go mod tidy
   echo "=> building mig"
-  CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/mig ./cmd/mig
+  CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=$MIG_VERSION" \
+    -o bin/mig ./cmd/mig
 end
 
 function mig_tag
